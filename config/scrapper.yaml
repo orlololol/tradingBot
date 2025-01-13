@@ -1,0 +1,22 @@
+twitter:
+  auth_token: ${TWITTER_AUTH_TOKEN}
+  ct0: ${TWITTER_CT0}
+  max_requests: 100
+  time_window: 60
+  kol_accounts:
+    - pump_master
+    - sol_trader
+    - meme_whale
+
+sentiment:
+  model_name: cardiffnlp/twitter-roberta-base-sentiment
+  batch_size: 32
+  cache_size: 1000
+
+rate_limits:
+  twitter:
+    max_requests: 100
+    time_window: 60
+  threads:
+    max_requests: 50
+    time_window: 60
