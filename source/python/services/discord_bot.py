@@ -14,14 +14,21 @@ from jupiter_client import JupiterClient
 logger = logging.getLogger(__name__)
 
 class TradingBot(commands.Bot):
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, solana_config: Dict, jupiter_config: Dict = {}):
         intents = discord.Intents.default()
         intents.message_content = True
         super().__init__(command_prefix='!', intents=intents)
         self.config = config
+        self.solana_config = solana_config
+        self.jupiter_config = jupiter_config
         
     async def setup_hook(self):
-        await self.add_cog(TradingCommands(self))
+        if 'TradingCommands' not in self.cogs:  # Check if the cog is already loaded
+            solana_client = SolanaClient(self.config)
+            jupiter_client = JupiterClient(self.config)
+            await self.add_cog(TradingCommands(self, solana_client, jupiter_client))
+        else:
+            print("TradingCommands cog is already loaded.")
         
     async def on_ready(self):
         logger.info(f'Logged in as {self.user.name}')
@@ -40,22 +47,23 @@ class TradingCommands(commands.Cog):
         await ctx.send(f"Tracking tokens: {', '.join(tokens)}")
     
     @commands.command()
-    async def buyprice(self, ctx, token: str, amount: float):
+    async def buyprice(self, ctx, token: str, usd_amount: float):
         """Buy token worth a specific amount in USD"""
         try:
             
             # Fetch the price of the token
-            price = await self.solana_client.get_token_symbol_price(token)
+            price = await self.solana_client.get_token_price(token)
             if price == 0.0:
                 await ctx.send(f"Could not fetch the price for {token}.")
                 return
 
             # Calculate the amount to buy
-            amount_in_SOL = int(amount / price)  # Convert USD to SOL
+            token_quantity = usd_amount / price  # Convert USD to SOL
+
             quote = await self.jupiter_client.get_quote(
                 input_token="SOL",  # Assuming buying with SOL
                 output_token=token,
-                amount=amount_in_SOL
+                amount=token_quantity
             )
 
             if not quote:
@@ -64,27 +72,27 @@ class TradingCommands(commands.Cog):
 
             # Execute the swap using Jupiter
             swap_result = await self.jupiter_client.submit_swap(quote)
-            await ctx.send(f"Successfully bought {amount / price:.6f} {token} for ${amount:.2f}. Transaction: {swap_result['txId']}")
+            await ctx.send(f"Successfully bought {token_quantity} {token} for ${usd_amount:.2f}. Transaction: {swap_result['txId']}")
         except Exception as e:
             await ctx.send(f"Failed to execute buy: {e}")
     
     @commands.command()
-    async def buyamt(self, ctx, token: str, quantity: float):
+    async def buyamt(self, ctx, token: str, token_quantity: float):
         """Buy a specific quantity of a token"""
         try:
             
             # Fetch the price of the token
-            price = await self.solana_client.get_token_symbol_price(token)
+            price = await self.solana_client.get_token_price(token)
             if price == 0.0:
                 await ctx.send(f"Could not fetch the price for {token}.")
                 return
 
             # Calculate the amount to buy
-            amount_in_SOL = int(quantity / price)  # Convert USD to lamports
+            usd_amount = token_quantity*price  # Convert to USD
             quote = await self.jupiter_client.get_quote(
                 input_token="SOL",  # Assuming buying with SOL
                 output_token=token,
-                amount=amount_in_SOL
+                amount=token_quantity
             )
 
             if not quote:
@@ -93,7 +101,7 @@ class TradingCommands(commands.Cog):
 
             # Execute the swap using Jupiter
             swap_result = await self.jupiter_client.submit_swap(quote)
-            await ctx.send(f"Successfully bought {amount / price:.6f} {token} for ${amount:.2f}. Transaction: {swap_result['txId']}")
+            await ctx.send(f"Successfully bought {token_quantity:.6f} {token} for ${usd_amount:.2f}. Transaction: {swap_result['txId']}")
         except Exception as e:
             await ctx.send(f"Failed to execute buy: {e}")
 
@@ -107,7 +115,7 @@ class TradingCommands(commands.Cog):
                 return
 
             # Fetch the price of the token
-            price = await self.solana_client.get_token_symbol_price(token_address)
+            price = await self.solana_client.get_token_price(token_address)
             if price == 0.0:
                 await ctx.send(f"Could not fetch the price for {token}.")
                 return
@@ -164,7 +172,7 @@ class TradingCommands(commands.Cog):
             return
         
         buy_price = self.tracked_tokens[token].get('buy_price')
-        current_price = await self.solana_client.get_token_symbol_price(token)
+        current_price = await self.solana_client.get_token_price(token)
         if buy_price:
             profit = (current_price - buy_price) / buy_price * 100
             await ctx.send(f"{token} profit: {profit:.2f}% (${current_price:.2f} vs ${buy_price:.2f})")
@@ -175,16 +183,12 @@ class TradingCommands(commands.Cog):
     async def checkprice(self, ctx, token: str):
         """Check the current price of a token"""
         try:
-            token_address = self.tracked_tokens.get(token.upper())
-            if not token_address:
-                await ctx.send(f"Token {token} not found in the token map.")
-                return
 
-            price = await self.solana_client.get_token_symbol_price(token_address)
+            price = await self.solana_client.get_token_price(token)
             if price == 0.0:
                 await ctx.send(f"Could not fetch the price for {token}.")
             else:
-                await ctx.send(f"The current price of {token} is ${price:.2f}")
+                await ctx.send(f"The current price of {token} is ${price}")
         except Exception as e:
             await ctx.send(f"Error checking price for {token}: {e}")
 
@@ -201,7 +205,7 @@ class TradingCommands(commands.Cog):
         
         channel_id = os.getenv('channel_id')
         for token, data in self.tracked_tokens.items():
-            current_price = await self.solana_client.get_token_symbol_price(token)
+            current_price = await self.solana_client.get_token_price(token)
             for alert_price in data.get('alerts', []):
                 if current_price >= alert_price:
                     await self.bot.get_channel(channel_id).send(

@@ -3,11 +3,18 @@
 """TODO implementations:
 - use cookies to authenticate, if no cookies, login with username and password
     https://twikit.readthedocs.io/en/latest/twikit.html#twikit.client.client.Client.get_cookies
-- search for token mentions
+    done
+    - search for token mentions
     https://twikit.readthedocs.io/en/latest/twikit.html#twikit.client.client.Client.search_tweet
-- search for latest tweets for a cherry picked list of user
+    done
+    - search for latest tweets for a cherry picked list of user
     https://twikit.readthedocs.io/en/latest/twikit.html#twikit.client.client.Client.search_user
-"""
+    done
+
+    - make a test
+
+    - send the data to kafka (and test it)
+    """
 
 from typing import List, Dict
 import logging
@@ -34,13 +41,20 @@ class TwitterScraper(BaseScraper):
         )
 
     async def initialize(self):
-        """Set up Twitter client with credentials"""
+        """Set up Twitter client with cookies or login credentials"""
         try:
-            self.client.set_cookies({
-                'auth_token': self.config['auth_token'],
-                'ct0': self.config['ct0']
-            })
-            logger.info("Twitter scraper initialized successfully")
+            if 'auth_token' in self.config and 'ct0' in self.config:
+                self.client.set_cookies({
+                    'auth_token': self.config['auth_token'],
+                    'ct0': self.config['ct0']
+                })
+                logger.info("Twitter scraper initialized with cookies")
+            else:
+                await self.client.login(
+                    username=self.config['username'],
+                    password=self.config['password']
+                )
+                logger.info("Twitter scraper initialized with login credentials")
         except Exception as e:
             logger.error(f"Failed to initialize Twitter scraper: {e}")
             raise
@@ -71,7 +85,7 @@ class TwitterScraper(BaseScraper):
         """Search for token mentions"""
         async with self.rate_limiter:
             try:
-                mentions = await self.client.search_mentions(query, limit)
+                mentions = await self.client.search_tweet(query, limit=limit)
                 mention_data = [
                     {
                         'mention': mention,
@@ -85,3 +99,26 @@ class TwitterScraper(BaseScraper):
             except Exception as e:
                 logger.error(f"Failed to search mentions: {e}")
                 return []
+            
+    async def search_user_tweets(self, usernames: List[str], limit: int = 10) -> Dict[str, List[Dict]]:
+        """Search for latest tweets from specific users"""
+        user_tweets = {}
+        async with self.rate_limiter:
+            for username in usernames:
+                try:
+                    tweets = await self.client.search_user(username, limit=limit)
+                    user_tweets[username] = [
+                        {
+                            'tweet': tweet,
+                            'username': username,
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        for tweet in tweets
+                    ]
+                    self.kafka_producer.send_trade_request({
+                        'type': 'user_tweets',
+                        'data': user_tweets[username]
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to fetch tweets for {username}: {e}")
+        return user_tweets

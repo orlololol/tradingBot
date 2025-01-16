@@ -11,23 +11,18 @@ class JupiterClient:
         """Initialize Jupiter DEX client"""
         self.config = config
         self.base_url = "https://quote-api.jup.ag/v6"
-        self.token_map = config.get("token_map", {})  # Map token symbols to addresses
         
     async def get_quote(self, 
                        input_token: str,
                        output_token: str,
                        amount: float) -> Dict:
         """Get swap quote from Jupiter"""
-        input_address = self.token_map.get(input_token.upper())
-        output_address = self.token_map.get(output_token.upper())
-        if not input_address or not output_address:
-            raise ValueError("Invalid token symbols.")
         try:
             async with aiohttp.ClientSession() as session:
                 url = f"{self.base_url}/quote"
                 params = {
-                    "inputMint": input_address,
-                    "outputMint": output_address,
+                    "inputMint": input_token,
+                    "outputMint": output_token,
                     "amount": str(int(amount * 1e9)),  # Convert to lamports
                     "slippageBps": self.config.get('slippage_bps', 50)
                 }

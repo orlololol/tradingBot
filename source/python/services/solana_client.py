@@ -17,8 +17,9 @@ class SolanaClient:
     def __init__(self, config: Dict):
         """Initialize Solana client with configuration"""
         self.config = config
+        print("Config:", self.config)  # Debugging the config
+        print("RPC URL:", config.get('rpc_url', 'Not found'))  # Safely check for 'rpc_url'
         self.client = AsyncClient(config['rpc_url'])
-        self.token_map : Dict = config.get("token_map", {})  # Map token symbols to addresses
         
     async def get_token_account(self, token_address: str) -> Dict:
         """Get token account information"""
@@ -30,34 +31,31 @@ class SolanaClient:
             logger.error(f"Failed to get token account: {e}")
             return {}
             
-    async def get_token_address_price(self, token_address: str) -> float:
-        """Get current token price from Jupiter aggregator"""
+    async def get_token_price(self, token_id: str, show_extra_info: bool = False) -> Optional[Dict]:
+        """
+        Get the price of a token using its symbol or address.
         
+        Args:
+            token_id (str): The symbol or address of the token (case-sensitive for addresses).
+            show_extra_info (bool): Whether to include extra information in the response.
+        
+        Returns:
+            Optional[Dict]: Price information or None if an error occurs.
+        """
         try:
             async with aiohttp.ClientSession() as session:
-                url = f"https://price.jup.ag/v4/price?ids={token_address}"
+                url = f"https://api.jup.ag/price/v2?ids={token_id}&showExtraInfo={str(show_extra_info).lower()}"
                 async with session.get(url) as response:
-                    data = await response.json()
-                    return float(data['data'][token_address]['price'])
+                    if response.status == 200:
+                        data: Dict = await response.json()
+                        return data.get("data", {}).get(token_id, {})
+                    else:
+                        logger.error(f"Failed to fetch price for {token_id}: HTTP {response.status}")
+                        return None
         except Exception as e:
-            logger.error(f"Failed to get token price: {e}")
-            return 0.0
-    
-    async def get_token_symbol_price(self, token_symbol: str) -> float:
-        """Get token price using Jupiter aggregator by symbol"""
-        token_address = self.token_map.get(token_symbol.upper())
-        if not token_address:
-            raise ValueError(f"Token {token_symbol} not supported.")
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                url = f"https://price.jup.ag/v4/price?ids={token_address}"
-                async with session.get(url) as response:
-                    data = await response.json()
-                    return float(data['data'][token_address]['price'])
-        except Exception as e:
-            logger.error(f"Failed to get token price for {token_symbol}: {e}")
-            return 0.0
+            logger.error(f"Error fetching token price for {token_id}: {e}")
+            return None
+
 
     async def get_token_supply(self, token_address: str) -> int:
         """Get token supply information"""
